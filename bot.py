@@ -17,14 +17,16 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+# Initialize Flask app first
+app = Flask(__name__)
+
 # Initialize bot
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-app = Flask(__name__)
 
 # Global variables
 crypto_prices = {'btc': 0, 'eth': 0}
 processed_transactions = set()
-filtered_transactions = set()  # Track transactions filtered by value
+filtered_transactions = set()
 start_time = time.time()
 address_stats = {
     'btc': {addr: {'alerts': 0, 'total_value': 0, 'filtered_count': 0} for addr in MONITORED_ADDRESSES['btc']},
@@ -68,8 +70,8 @@ def health_check():
         'monitored_addresses': {
             'btc_count': len(MONITORED_ADDRESSES['btc']),
             'eth_count': len(MONITORED_ADDRESSES['eth']),
-            'btc_addresses': MONITORED_ADDRESSES['btc'][:5],  # Show first 5
-            'eth_addresses': MONITORED_ADDRESSES['eth'][:5]   # Show first 5
+            'btc_addresses': MONITORED_ADDRESSES['btc'][:5],
+            'eth_addresses': MONITORED_ADDRESSES['eth'][:5]
         },
         'statistics': {
             'btc_alerts': total_btc_alerts,
@@ -256,7 +258,7 @@ def send_startup_summary():
 • Addresses: {RAILWAY_PUBLIC_DOMAIN}/addresses
 • Stats: {RAILWAY_PUBLIC_DOMAIN}/stats
 
-⚡ <b>Status:</b> All systems starting...
+⚡ <b>Status:</b> All systems started!
 📥 <b>Ready to monitor incoming transfers ≥ ${MINIMUM_USD_VALUE} USD!</b>
 """
     
@@ -418,7 +420,7 @@ def on_btc_message(ws, message):
                                     except Exception as e:
                                         logging.error(f"Error sending BTC message: {e}")
                                         health_status['errors_count'] += 1
-                                    break  # ส่งแจ้งเตือนเพียงครั้งเดียวต่อ transaction
+                                    break
                             else:
                                 # บันทึกธุรกรรมที่ถูกกรองออก
                                 address_stats['btc'][output_addr]['filtered_count'] += 1
@@ -509,26 +511,6 @@ def reset_daily_stats():
         health_status['total_filtered'] = 0
         
         logging.info("Reset daily statistics (alerts and filtered counts)")
-        
-        # Send summary before reset
-        try:
-            summary_msg = f"""
-🔄 <b>Daily Reset Complete</b>
-
-📊 <b>New day started!</b>
-⚙️ Alert counters reset to 0
-🔇 Filter counters reset to 0
-💰 Value tracking continues
-
-📥 <b>Ready for incoming transfers ≥ ${MINIMUM_USD_VALUE} USD</b>
-"""
-            bot.send_message(CHAT_ID, summary_msg, parse_mode='HTML')
-        except Exception as e:
-            logging.error(f"Error sending reset message: {e}")
-
-def run_flask():
-    """รัน Flask server สำหรับ Railway"""
-    app.run(host='0.0.0.0', port=PORT, debug=False)
 
 def handle_telegram_commands():
     """Handle Telegram bot commands"""
@@ -602,4 +584,36 @@ def handle_telegram_commands():
             for i, addr in enumerate(MONITORED_ADDRESSES['btc'][:10], 1):
                 label = get_address_label(addr, 'btc')
                 alerts = address_stats['btc'][addr]['alerts']
-                filtered =
+                filtered = address_stats['btc'][addr]['filtered_count']
+                addr_text += f"{i}. {label} ({alerts} alerts, {filtered} filtered)\n"
+            
+            if len(MONITORED_ADDRESSES['btc']) > 10:
+                addr_text += f"<i>... and {len(MONITORED_ADDRESSES['btc']) - 10} more</i>\n"
+            addr_text += "\n"
+        
+        if MONITORED_ADDRESSES['eth']:
+            addr_text += "⟠ <b>ETH Addresses:</b>\n"
+            for i, addr in enumerate(MONITORED_ADDRESSES['eth'][:10], 1):
+                label = get_address_label(addr, 'eth')
+                alerts = address_stats['eth'][addr]['alerts']
+                filtered = address_stats['eth'][addr]['filtered_count']
+                addr_text += f"{i}. {label} ({alerts} alerts, {filtered} filtered)\n"
+            
+            if len(MONITORED_ADDRESSES['eth']) > 10:
+                addr_text += f"<i>... and {len(MONITORED_ADDRESSES['eth']) - 10} more</i>\n"
+        
+        bot.reply_to(message, addr_text, parse_mode='HTML')
+    
+    @bot.message_handler(commands=['stats'])
+    def send_stats(message):
+        # Calculate totals
+        total_btc_alerts = sum(stats['alerts'] for stats in address_stats['btc'].values())
+        total_eth_alerts = sum(stats['alerts'] for stats in address_stats['eth'].values())
+        total_btc_value = sum(stats['total_value'] for stats in address_stats['btc'].values())
+        total_eth_value = sum(stats['total_value'] for stats in address_stats['eth'].values())
+        total_btc_filtered = sum(stats['filtered_count'] for stats in address_stats['btc'].values())
+        total_eth_filtered = sum(stats['filtered_count'] for stats in address_stats['eth'].values())
+        
+        # Find top performers
+        top_btc = sorted(address_stats['btc'].items(), key=lambda x: x[1]['alerts'], reverse=True)[:3]
+        top_eth = sorted(address_stats['eth'].items(), key=lambda x: x[1]['alerts'], reverse=True)[:3]
